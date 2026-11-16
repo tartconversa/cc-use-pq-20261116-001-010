@@ -77,6 +77,53 @@ CREATE TABLE IF NOT EXISTS audits (
     audit_id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL,
     subject TEXT NOT NULL, detail_json TEXT NOT NULL, at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS metric_definitions (
+    metric_key TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL,
+    description TEXT, spec_json TEXT NOT NULL, digest TEXT NOT NULL,
+    created_at TEXT NOT NULL, PRIMARY KEY(metric_key,version)
+);
+CREATE TABLE IF NOT EXISTS metric_recompute_tasks (
+    task_id TEXT PRIMARY KEY, request_key TEXT NOT NULL,
+    metric_key TEXT NOT NULL, definition_version INTEGER NOT NULL, definition_digest TEXT NOT NULL,
+    venue_id TEXT NOT NULL, local_day TEXT NOT NULL, snapshot_id TEXT NOT NULL,
+    snapshot_digest TEXT NOT NULL, members_digest TEXT NOT NULL,
+    input_generation INTEGER NOT NULL, input_event_count INTEGER NOT NULL, input_digest TEXT NOT NULL,
+    scope_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, result_id TEXT,
+    error_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT,
+    UNIQUE(metric_key,venue_id,local_day,request_key),
+    FOREIGN KEY(metric_key,definition_version) REFERENCES metric_definitions(metric_key,version),
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id)
+);
+CREATE INDEX IF NOT EXISTS ix_metric_tasks_snapshot ON metric_recompute_tasks(snapshot_id);
+CREATE TABLE IF NOT EXISTS metric_results (
+    result_id TEXT PRIMARY KEY,
+    metric_key TEXT NOT NULL, definition_version INTEGER NOT NULL, definition_digest TEXT NOT NULL,
+    venue_id TEXT NOT NULL, local_day TEXT NOT NULL, result_version INTEGER NOT NULL,
+    snapshot_id TEXT NOT NULL, snapshot_digest TEXT NOT NULL, members_digest TEXT NOT NULL,
+    input_generation INTEGER NOT NULL, input_event_count INTEGER NOT NULL, input_digest TEXT NOT NULL,
+    task_id TEXT NOT NULL, definition_json TEXT NOT NULL, result_json TEXT NOT NULL,
+    scope_json TEXT NOT NULL DEFAULT '[]',
+    calculation_key TEXT NOT NULL, result_digest TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE(metric_key,venue_id,local_day,result_version),
+    UNIQUE(metric_key,venue_id,local_day,calculation_key),
+    UNIQUE(task_id),
+    FOREIGN KEY(metric_key,definition_version) REFERENCES metric_definitions(metric_key,version),
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id),
+    FOREIGN KEY(task_id) REFERENCES metric_recompute_tasks(task_id)
+);
+CREATE INDEX IF NOT EXISTS ix_metric_results_snapshot ON metric_results(snapshot_id);
+CREATE TABLE IF NOT EXISTS metric_publications (
+    publication_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+    result_id TEXT NOT NULL, definition_version INTEGER NOT NULL, definition_digest TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1, published_at TEXT NOT NULL, retired_at TEXT,
+    retire_reason TEXT,
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id),
+    FOREIGN KEY(result_id) REFERENCES metric_results(result_id),
+    FOREIGN KEY(metric_key,definition_version) REFERENCES metric_definitions(metric_key,version)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_metric_publication_active
+    ON metric_publications(snapshot_id,metric_key) WHERE active=1;
 """
 
 

@@ -95,33 +95,44 @@ class Snapshots:
 
     def verify(self, snapshot_id: str) -> dict:
         with self.store.transaction(write=False) as conn:
-            snapshot = self._describe(conn, snapshot_id)
-            manifest = snapshot["manifest"]
-            members = Store.many(conn, "SELECT source_id,event_id,payload_hash FROM snapshot_members WHERE snapshot_id=? ORDER BY source_id,event_id",
-                                 (snapshot_id,))
-            if members != manifest["members"]:
-                raise IntegrityFailure("snapshot membership differs from manifest")
-            if digest(manifest) != snapshot["digest"]:
-                raise IntegrityFailure("snapshot digest differs from manifest")
-            if manifest["venue_id"] != snapshot["venue_id"] or manifest["local_day"] != snapshot["local_day"]:
-                raise IntegrityFailure("snapshot partition differs from manifest")
-            if manifest["generation"] != snapshot["generation"] or manifest["parent_id"] != snapshot["parent_id"]:
-                raise IntegrityFailure("snapshot lineage differs from manifest")
-            if len({(x["source_id"], x["event_id"]) for x in members}) != len(members):
-                raise IntegrityFailure("duplicate snapshot membership")
-            records = self._events(conn, snapshot_id)
-            if len(records) != len(members):
-                raise IntegrityFailure("snapshot event missing")
-            for item, record in zip(members, records):
-                if item["source_id"] != record["source_id"] or item["event_id"] != record["event_id"]:
-                    raise IntegrityFailure("snapshot event order differs")
-                if item["payload_hash"] != record["payload_hash"]:
-                    raise IntegrityFailure("source event changed since staging")
-                if record["venue_id"] != snapshot["venue_id"] or record["local_day"] != snapshot["local_day"]:
-                    raise IntegrityFailure("snapshot event belongs to another partition")
-            if manifest["statistics"] != _statistics(records):
-                raise IntegrityFailure("snapshot statistics differ from members")
-            return {"snapshot_id": snapshot_id, "valid": True, "events": len(records), "digest": snapshot["digest"]}
+            return self.verify_in(conn, snapshot_id)
+
+    def verify_in(self, conn: sqlite3.Connection, snapshot_id: str) -> dict:
+        """校验快照并返回其成员摘要，供同一事务中的下游计算复用。"""
+        snapshot = self._describe(conn, snapshot_id)
+        manifest = snapshot["manifest"]
+        members = Store.many(conn, "SELECT source_id,event_id,payload_hash FROM snapshot_members WHERE snapshot_id=? ORDER BY source_id,event_id",
+                             (snapshot_id,))
+        if members != manifest["members"]:
+            raise IntegrityFailure("snapshot membership differs from manifest")
+        if digest(manifest) != snapshot["digest"]:
+            raise IntegrityFailure("snapshot digest differs from manifest")
+        if manifest["venue_id"] != snapshot["venue_id"] or manifest["local_day"] != snapshot["local_day"]:
+            raise IntegrityFailure("snapshot partition differs from manifest")
+        if manifest["generation"] != snapshot["generation"] or manifest["parent_id"] != snapshot["parent_id"]:
+            raise IntegrityFailure("snapshot lineage differs from manifest")
+        if len({(x["source_id"], x["event_id"]) for x in members}) != len(members):
+            raise IntegrityFailure("duplicate snapshot membership")
+        records = self._events(conn, snapshot_id)
+        if len(records) != len(members):
+            raise IntegrityFailure("snapshot event missing")
+        for item, record in zip(members, records):
+            if item["source_id"] != record["source_id"] or item["event_id"] != record["event_id"]:
+                raise IntegrityFailure("snapshot event order differs")
+            if item["payload_hash"] != record["payload_hash"]:
+                raise IntegrityFailure("source event changed since staging")
+            if record["venue_id"] != snapshot["venue_id"] or record["local_day"] != snapshot["local_day"]:
+                raise IntegrityFailure("snapshot event belongs to another partition")
+        if manifest["statistics"] != _statistics(records):
+            raise IntegrityFailure("snapshot statistics differ from members")
+        return {"snapshot_id": snapshot_id, "valid": True, "events": len(records), "digest": snapshot["digest"]}
+
+    def members_in(self, conn: sqlite3.Connection, snapshot_id: str) -> list[dict]:
+        return Store.many(conn, "SELECT source_id,event_id,payload_hash FROM snapshot_members "
+                          "WHERE snapshot_id=? ORDER BY source_id,event_id", (snapshot_id,))
+
+    def records_in(self, conn: sqlite3.Connection, snapshot_id: str) -> list[dict]:
+        return self._events(conn, snapshot_id)
 
     def _events(self, conn: sqlite3.Connection, snapshot_id: str) -> list[dict]:
         return Store.many(conn, "SELECT e.source_id,e.event_id,e.exhibit_id,e.event_at,e.local_day,e.venue_id,"

@@ -18,6 +18,8 @@ from exhibit_lake.query.coverage import Coverage
 from exhibit_lake.query.experience import Experience
 from exhibit_lake.query.provenance import Provenance
 from exhibit_lake.query.batch_quality import BatchQuality
+from exhibit_lake.metrics.definitions import MetricDefinitions
+from exhibit_lake.metrics.service import Metrics
 
 
 class ExhibitLake:
@@ -37,6 +39,8 @@ class ExhibitLake:
         self.contracts = Contracts(self.store)
         self.provenance = Provenance(self.store)
         self.batch_quality = BatchQuality(self.store)
+        self.metric_definitions = MetricDefinitions(self.store)
+        self.metrics = Metrics(self.store, self.metric_definitions, self.snapshots)
 
     def register_venue(self, venue_id: str, name: str, timezone: str) -> dict:
         return self.registry.venue(venue_id, name, timezone)

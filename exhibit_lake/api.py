@@ -62,6 +62,30 @@ class WithdrawIn(BaseModel):
     withdrawn_on: str
 
 
+class MetricDefinitionIn(BaseModel):
+    metric_key: str
+    name: str
+    description: str | None = None
+    spec: dict
+
+
+class RecomputeIn(BaseModel):
+    metric_key: str
+    venue_id: str
+    local_day: str
+    snapshot_id: str | None = None
+    request_key: str
+    definition_version: int | None = None
+    definition: dict | None = None
+    exhibit_ids: list[str] | None = None
+    defer: bool = False
+
+
+class MetricPublishIn(BaseModel):
+    expected_publication_id: str | None = None
+    reason: str | None = None
+
+
 def create_app(database: str | None = None) -> FastAPI:
     lake = ExhibitLake(database or os.environ.get("EXHIBIT_LAKE_DB", "exhibit_lake.db"))
     app = FastAPI(title="Exhibit Lake", version="1.0.0")
@@ -260,6 +284,74 @@ def create_app(database: str | None = None) -> FastAPI:
     @app.get("/venues/{venue_id}/days/{local_day}/batch-quality")
     def day_batch_quality(venue_id: str, local_day: str):
         return lake.batch_quality.partition(venue_id, local_day)
+
+    @app.post("/metrics", status_code=201)
+    def register_metric(data: MetricDefinitionIn):
+        result = lake.metric_definitions.register(data.metric_key, data.name, data.spec, data.description)
+        return result
+
+    @app.get("/metrics")
+    def metric_catalog():
+        return lake.metric_definitions.catalog()
+
+    @app.get("/metrics/{metric_key}/definitions")
+    def metric_definitions(metric_key: str):
+        return lake.metric_definitions.versions(metric_key)
+
+    @app.get("/metrics/{metric_key}/definitions/{version}")
+    def metric_definition(metric_key: str, version: int):
+        return lake.metric_definitions.get(metric_key, version)
+
+    @app.post("/metrics/recomputes", status_code=201)
+    def recompute_metric(data: RecomputeIn):
+        return lake.metrics.recompute(data.metric_key, data.venue_id, data.local_day,
+                                      data.snapshot_id, data.request_key,
+                                      data.definition_version, data.exhibit_ids,
+                                      defer=data.defer, definition=data.definition)
+
+    @app.get("/metrics/recomputes")
+    def recompute_tasks(venue_id: str | None = None, local_day: str | None = None,
+                        metric_key: str | None = None, status: str | None = None,
+                        offset: int = 0, limit: int = 100):
+        return lake.metrics.tasks(venue_id=venue_id, local_day=local_day, metric_key=metric_key,
+                                  status=status, offset=offset, limit=limit)
+
+    @app.get("/metrics/recomputes/{task_id}")
+    def recompute_task(task_id: str):
+        return lake.metrics.task(task_id)
+
+    @app.post("/metrics/recomputes/{task_id}/retry")
+    def retry_recompute(task_id: str):
+        return lake.metrics.retry(task_id)
+
+    @app.get("/metrics/results/{result_id}")
+    def metric_result(result_id: str):
+        return lake.metrics.result(result_id)
+
+    @app.get("/metrics/results/{result_id}/trace")
+    def metric_trace(result_id: str):
+        return lake.metrics.trace(result_id)
+
+    @app.get("/metrics/{metric_key}/results")
+    def metric_results(metric_key: str, venue_id: str, local_day: str):
+        return lake.metrics.results(metric_key, venue_id, local_day)
+
+    @app.post("/metrics/results/{result_id}/publish", status_code=201)
+    def publish_metric(result_id: str, data: MetricPublishIn):
+        return lake.metrics.publish(result_id, data.expected_publication_id, data.reason)
+
+    @app.get("/snapshots/{snapshot_id}/metrics")
+    def snapshot_metrics(snapshot_id: str, metric_key: str | None = None):
+        return lake.metrics.publications(snapshot_id, metric_key=metric_key)
+
+    @app.get("/venues/{venue_id}/days/{local_day}/metrics")
+    def day_metrics(venue_id: str, local_day: str, snapshot_id: str | None = None):
+        return lake.metrics.day(venue_id, local_day, snapshot_id)
+
+    @app.get("/venues/{venue_id}/days/{local_day}/metrics/{metric_key}")
+    def metric_report(venue_id: str, local_day: str, metric_key: str,
+                      snapshot_id: str | None = None, definition_version: int | None = None):
+        return lake.metrics.report(venue_id, local_day, metric_key, snapshot_id, definition_version)
 
     return app
 
